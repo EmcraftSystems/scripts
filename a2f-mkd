@@ -1,0 +1,625 @@
+#!/bin/bash
+# Debug
+# set -x
+# Exit if error
+set -e
+# Default repo dir is cwd
+: ${REPO_DIR:=`pwd`}
+: ${GITURL:="git.emcraft.com:/SR/git/A2F"}
+: ${OUTDIR:=`pwd`}
+: ${DISTRUSER:=a2f}
+: ${GITHUBURL:="git@github.com:EmcraftSystems"}
+: ${GITLABURL:="git@gitlab.com:emcraft/STM32H7"}
+
+TOOLCHAINDIR="arm-buildroot-uclinuxfdpiceabi_sdk-buildroot"
+TOOLCHAIN="arm-buildroot-uclinuxfdpiceabi"
+
+PROJECTLIST="rootfs"
+TAR="no"
+
+MCU="IMXRT117X_NXPEVK"
+BUILDROOT_DEFCONFIG="arm_cortexm_sdk_defconfig"
+
+usage() {
+	echo "Usage: $0 [-t] [-d <dir>] -m <MCU> [<tagname>]"
+	echo "MCU is one of A2F, STM, STM32F4, STMSOM, STMSOM2A, STM32F7, STMDISCO, STM32F7DISCO, LPC, LPC4350, LPC4357, LPC1850, IMXRT1050, IMXRT1060, IMXRT117X, IMXRT102X or something. Default is A2F."
+	exit 1
+}
+
+[ $# -ge 2 ] || usage;
+
+BDIR=build-HEAD
+
+#
+# Process options
+#
+while getopts "Qtm:d:" opt
+do
+    case "$opt" in
+	t)      TAR=yes ;;
+	m)      MCU=$OPTARG ;;
+	d)      BDIR=$OPTARG ;;
+        *)      echo "$0: Invalid option '$opt'" >&2 ; exit 1 ;;
+        esac
+done
+
+shift `expr $OPTIND - 1`
+
+# LPC43XX and LPC18XX shares the same $MCU (and kernel configs)
+case "${MCU}" in
+    LPC1850|LPC4350|LPC4357) MCU=LPC18XX ;;
+    STM32F4) MCU=STM;;
+    STM32F7) MCU=STM32F7;;
+    STM32H7) MCU=STM32H7;;
+    STM32H753IEVAL) MCU=STM32H753IEVAL;;
+    STMSOM) MCU=STM32F4;;
+    STMSOM2A) MCU=STM32F4X9;;
+    IMXRT1050) MCU=IMXRT105X_NXPEVK;;
+    IMXRT1060) MCU=IMXRT106X_NXPEVK;;
+    IMXRT117X) MCU=IMXRT117X_NXPEVK;;
+    IMXRT102X) MCU=IMXRT102X_NXPEVK;;
+    Avnet) MCU=MAAXBOARD_RT;;
+    *) ;;
+esac
+
+declare -a REPOLIST
+REPOLIST+=("busybox-upstream:emcraft-1.35.0")
+REPOLIST+=("projects:linux-upstream-ng")
+REPOLIST+=("buildroot:emcraft-fdpic-2022.08.x")
+REPOLIST+=("scripts")
+# tbd net-snmp 5.x source incompatible with buildroot's OpenSSL 1.1+ (opaque EVP_MD_CTX)
+# REPOLIST+=("net-snmp")
+REPOLIST+=("iap_tool")
+REPOLIST+=("wireless_tools")
+REPOLIST+=("hostapd-1.0")
+REPOLIST+=("libnl-3.2.11")
+# tbd REPOLIST+=("netperf-2.6.0")
+REPOLIST+=("alsa-utils-1.0.25")
+REPOLIST+=("alsa-lib-1.0.25")
+REPOLIST+=("openssl-1.0.1h")
+REPOLIST+=("bt-tools")
+REPOLIST+=("zlib-1.2.8")
+REPOLIST+=("ncurses")
+REPOLIST+=("can-tests:master")
+REPOLIST+=("can-utils:emcraft")
+REPOLIST+=("iproute2:main-2.6.34")
+REPOLIST+=("fdpic/fdpichdr")
+REPOLIST+=("samba-3.0.25")
+# tbd REPOLIST+=("libfuse:emcraft")
+REPOLIST+=("strace:v4.25")
+REPOLIST+=("iptables:emcraft-1.8.1")
+REPOLIST+=("omping:emcraft-0.0.5")
+REPOLIST+=("lvgl:v8.3.6")
+REPOLIST+=("lv_drivers:v8.3.0")
+
+if [ ${MCU} = "STM32H7" -o ${MCU} = STM32H753IEVAL ]; then
+	REPOLIST+=("u-boot-upstream:emcraft-2019.04")
+	REPOLIST+=("linux-stm:v6.1-stm32mp")
+	UBOOT_SRC_DIR="u-boot-upstream"
+	LINUX_SRC_DIR="linux-stm"
+	REPOLIST+=("tools:tools:master-5.15")
+elif [ ${MCU} = IMXRT102X_NXPEVK ]; then
+	REPOLIST+=("u-boot-vybrid:imxrt-6.12.20")
+	REPOLIST+=("linux-imx:emcraft-6.12.20")
+	UBOOT_SRC_DIR="u-boot-vybrid"
+	LINUX_SRC_DIR="linux-imx"
+	REPOLIST+=("tools:master-6.12-imxrt")
+elif [ ${MCU} = "IMXRT105X_NXPEVK" -o ${MCU} = "IMXRT106X_NXPEVK" ]; then
+	REPOLIST+=("u-boot-vybrid:imxrt-6.12.20")
+	REPOLIST+=("linux-imx:emcraft-6.12.20")
+	UBOOT_SRC_DIR="u-boot-vybrid"
+	LINUX_SRC_DIR="linux-imx"
+	REPOLIST+=("tools:master-6.12-imxrt")
+elif [ ${MCU} = "IMXRT117X_NXPEVK" -o ${MCU} = "MAAXBOARD_RT" ]; then
+	REPOLIST+=("u-boot-vybrid:imxrt-6.12.20")
+	REPOLIST+=("linux-imx:emcraft-6.12.20")
+	UBOOT_SRC_DIR="u-boot-vybrid"
+	LINUX_SRC_DIR="linux-imx"
+	REPOLIST+=("tools:master-6.12-imxrt")
+else
+	echo "Not supported MCU=${MCU}"
+	exit 1
+fi
+# uclibc is built with toolchain now.
+#REPOLIST="${REPOLIST} uclibc"
+
+# Qt???? TBD
+
+echo "#####################################"
+echo "#     Building for MCU $MCU         #"
+echo "#####################################"
+
+if [ ${TAR} = "yes" ]; then
+	id ${DISTRUSER} >& /dev/null
+	if [ $? != 0 ]; then
+		echo "User \"${DISTRUSER}\" doesn't exist, cannot create tarball."
+		exit 1
+	fi
+fi
+
+if [ $# -eq 0 -o "$1" == "" ]; then
+	build_dir=$BDIR
+else
+	build_dir=$1
+fi
+
+[ -d ${OUTDIR}/$build_dir ] && (echo "Cleaning up ${OUTDIR}/$build_dir..."; rm -rf ${OUTDIR}/$build_dir)
+mkdir -p ${OUTDIR}/$build_dir
+cd ${OUTDIR}/$build_dir
+
+for dir in ${REPOLIST[*]}
+do
+	declare -a d
+	d+=(${dir//:/ })
+	if [ ${#d[*]} -gt 1 ]; then
+		branch=${d[1]}
+	else 
+		branch=master
+	fi
+	if [ "$1" != "" ]; then
+		branch=$1
+	fi
+	echo "Checkout ${d[0]} $branch"
+	dir_fetch=${d[0]}
+	dir_arch=`basename ${d[0]}`
+	echo "Creating tree in ${OUTDIR}/$build_dir/${dir_fetch}"
+
+	# git archive does not work on strace
+	if [ "${d[0]}" == "strace" ]; then
+		git clone -b $branch $GITURL/$dir_fetch
+		rm -rf ./$dir_fetch/.git
+		unset d
+		continue
+	fi
+
+	if [[ "${d[0]}" == "linux-imx" || "${d[0]}" == "linux-stm" || "${d[0]}" == "buildroot" ]]; then
+		git clone --depth=1 ${GITHUBURL}/${dir_fetch} -b $branch && rm -rf ${dir_fetch}/.git
+	elif [ "${d[0]}" == "u-boot-upstream" ]; then
+		git clone --depth=1 ${GITLABURL}/${dir_fetch} -b $branch && rm -rf ${dir_fetch}/.git
+	else
+		git archive --format=tar --remote ${GITURL}/${dir_fetch} --prefix=$dir_fetch/ $branch | tar xf -
+	fi
+
+	unset d
+done
+
+# Side-clone of the lvgl branch of projects: provides the rootfs/lvgl/ build
+# recipe used to populate A2F/lvgl_bins/. Not shipped in the release.
+echo "Checkout projects (lvgl recipe) linux-upstream-ng-imxrt-lvgl"
+git archive --format=tar --remote ${GITURL}/projects --prefix=.lvgl-build/ \
+	linux-upstream-ng-imxrt-lvgl | tar xf -
+
+# Copy source trees
+echo -n $build_dir > _MANIFEST
+echo "-${MCU}" >> _MANIFEST
+
+mv $UBOOT_SRC_DIR u-boot
+# We keep "A2F" as a name of the target dir, regardless
+# of what the target is - A2F, STM32 or LPC.
+mkdir A2F
+mv busybox-upstream A2F/busybox
+# mv uclibc A2F/uclibc
+mv iap_tool A2F/iap_tool
+mv wireless_tools A2F/
+mv hostapd-1.0 A2F/
+mv libnl-3.2.11 A2F/
+# tbd mv netperf-2.6.0 A2F/
+mv alsa-utils-1.0.25 alsa-lib-1.0.25 A2F/
+mv openssl-1.0.1h A2F/
+mv bt-tools A2F/
+mv zlib-1.2.8 A2F/
+# mv qt-4.7.3 A2F/
+rm -rf crankdemo # installs to project
+mv ncurses A2F/
+mv can-utils A2F/
+mv can-tests A2F/
+mv iproute2 A2F/
+mv fdpic/fdpichdr A2F/
+mv samba-3.0.25 A2F/
+# tbd mv libfuse A2F/libfuse-3.2.6
+mv strace A2F/strace-4.25
+mv iptables A2F/iptables-1.8.1+gitb2fc2a3685
+mv omping A2F/omping-0.0.5
+mv lvgl A2F/
+mv lv_drivers A2F/
+cd A2F
+# For net-snmp, scripts install to A2F/xiproot there.
+ln -s root xiproot
+cd -
+# Copy only the projects from the list
+mkdir tmp
+mv projects/* tmp
+for d in ${PROJECTLIST}
+do
+    mv tmp/${d} projects/
+#    if [ ${MCU} = "IMXRT106X*" ]; then
+#	cp projects/${d}/${d}.kernel.IMXRT105X* projects/${d}/${d}.kernel.IMXRT106X_NXPEVK
+#    fi
+done
+mv tmp/Rules.make projects/
+mv tmp/rfs-builder.py projects/
+rm -rf tmp
+rm -rf scripts
+
+
+PROJECTS_CLEANUP_LIST=`cd projects; find ${PROJECTLIST} -type f \( -name *.dts.* -o -name *.kernel.* -o -name *_defconfig \) \
+	-not \( -name ${PROJECTLIST}.*.${MCU} -o -name ${MCU}_defconfig \)`
+mv $LINUX_SRC_DIR linux
+mv tools/ACTIVATE-xip.sh ACTIVATE.sh
+rm -f tools/ACTIVATE*
+
+# ACTIVATE.sh: substitute _DEFAULT_MCU and _SUPPORTED_MCUS in the new template
+python3 - "${MCU}" <<'PYEOF'
+import re, sys
+mcu = sys.argv[1]
+with open('ACTIVATE.sh') as f:
+	text = f.read()
+new_mcus = '_SUPPORTED_MCUS="\\\nIMXRT117X_NXPEVK \\\nMAAXBOARD_RT"'
+text, n = re.subn(r'_SUPPORTED_MCUS="\\\n(?:[A-Z0-9_]+ \\\n)+[A-Z0-9_]+"', new_mcus, text)
+assert n == 1, "failed to locate _SUPPORTED_MCUS block"
+text, n = re.subn(r'^_DEFAULT_MCU=.*$', f'_DEFAULT_MCU="{mcu}"', text, flags=re.MULTILINE)
+assert n == 1, "failed to locate _DEFAULT_MCU line"
+with open('ACTIVATE.sh', 'w') as f:
+	f.write(text)
+PYEOF
+
+# Projects
+echo "Cleanup projects..."
+cd projects
+for f in ${PROJECTS_CLEANUP_LIST}
+do
+    echo "rm -rf $f"
+    rm -rf $f
+done
+if [ ${MCU} = "LPC" ]; then
+    find . -name \*.kernel.LPC | xargs sed -i "s/.*STM32.*//g"
+fi
+cd -
+
+# Build images. TBD - add the build of the release U-Boot image here.
+
+# Build the docker image (used for buildroot SDK + A2F app builds)
+./tools/docker/run.sh --build
+
+# Build buildroot SDK (defconfig + build + SDK tarball) inside the container
+./tools/docker/run.sh --mcu ${MCU} --sdk ${BUILDROOT_DEFCONFIG} \
+	make -C projects/rootfs buildroot
+
+# Lift SDK tarball as a sidecar release artefact
+SDK_OUT="buildroot/output_${BUILDROOT_DEFCONFIG%_defconfig}"
+SDK_TARBALL=$(ls ${SDK_OUT}/images/arm-buildroot-uclinuxfdpiceabi_sdk-buildroot*.tar.gz 2>/dev/null | head -1)
+if [ -z "${SDK_TARBALL}" ]; then
+	echo "ERROR: buildroot SDK tarball not found under ${SDK_OUT}/images/" >&2
+	exit 1
+fi
+cp "${SDK_TARBALL}" "${OUTDIR}/${build_dir}-sdk.tar.gz"
+
+# Seed A2F/root with the buildroot-produced rootfs (frozen userspace snapshot)
+mkdir -p A2F/root
+./tools/docker/run.sh --mcu ${MCU} --sdk ${BUILDROOT_DEFCONFIG} \
+	tar -xJf "${SDK_OUT}/images/rootfs.tar.xz" -C A2F/root/
+
+# Build remaining A2F apps inside the container using the buildroot toolchain
+cat > .a2f-build.sh <<'INNER_EOF'
+#!/bin/bash
+set -e
+
+cd ${INSTALL_ROOT}/A2F/fdpichdr
+# CFLAGS override drops the Makefile's default -m32 (container is x86_64, no multilib)
+CFLAGS="-O2 -Wall -Wextra" make
+cp fdpichdr ${INSTALL_ROOT}/tools/bin
+make -s clean
+cd -
+
+
+
+# Build mkimage
+echo BUILD MKIMAGE
+cd u-boot
+case "${MCU}" in
+    IMXRT105X*) make imxrt1050-evk-sdcard_defconfig;;
+    IMXRT106X*) make imxrt1060-evk-sdcard_defconfig;;
+    IMXRT117X*) make imxrt1170-evk-sdcard_defconfig;;
+    MAAXBOARD_RT*) make maaxboard-rt_defconfig;;
+    IMXRT102X*) make imxrt1024-evk-sdcard_defconfig;;
+    STM32H7) make stm32h7_som_nor_defconfig;;
+    STM32H753IEVAL) make stm32h753-eval_defconfig;;
+    *) echo "TBD: add u-boot configuration"; exit 1;;
+esac
+make -s tools
+cp tools/mkimage ${INSTALL_ROOT}/tools/bin
+make distclean -s
+cd -
+
+if [ `false` ]; then
+# Build uClibc
+
+cd A2F/uclibc
+
+case "${MCU}" in
+    A2F) UCLIBC_CONFIG="dot_config_pthreads-no-ldrex" ;;
+    *) UCLIBC_CONFIG="dot_config_pthreads" ;;
+esac
+
+sed -e "s@KRNL_HDR@../root/usr/include/@" < ${UCLIBC_CONFIG} > .config
+make -s ARCH_CFLAGS= 'CPU_CFLAGS=-mthumb -march=armv7 -mfix-cortex-m3-ldrd' oldconfig
+make ARCH_CFLAGS= 'CPU_CFLAGS=-mthumb -march=armv7 -mfix-cortex-m3-ldrd' -j2 -s
+make -s ARCH_CFLAGS= 'CPU_CFLAGS=-mthumb -march=armv7 -mfix-cortex-m3-ldrd' PREFIX=${INSTALL_ROOT}/A2F/root install
+make -s ARCH_CFLAGS= 'CPU_CFLAGS=-mthumb -march=armv7 -mfix-cortex-m3-ldrd' distclean
+cd -
+fi
+
+CROSS_COMPILE_SAVED=${CROSS_COMPILE}
+CROSS_COMPILE=${CROSS_COMPILE_APPS}
+
+# wireless_tools
+echo  "Building wireless_tools..."
+cd A2F/wireless_tools
+# FDPIC build
+make CFLAGS="-Os" -s
+PREFIX=${INSTALL_ROOT}/A2F/root make install -s
+make -s clean
+echo "Done"
+cd -
+
+# hostapd
+# FDPIC build
+mkdir build-libnl
+cd build-libnl
+CFLAGS="-Os" ${INSTALL_ROOT}/A2F/libnl-3.2.11/configure --build=i386-linux --host=arm-linux --prefix=/usr
+make -s -j8
+DESTDIR=${INSTALL_ROOT}/A2F/root make install -s
+ln -s libnl3/netlink ${INSTALL_ROOT}/A2F/root/usr/include/netlink
+cd -
+rm -rf build-libnl
+
+cd ${INSTALL_ROOT}/A2F/hostapd-1.0/hostapd
+cp dot.config .config
+CC=arm-buildroot-uclinuxfdpiceabi-gcc LDFLAGS="-L${INSTALL_ROOT}/A2F/root/usr/lib" CFLAGS="-Os -I ${INSTALL_ROOT}/A2F/root/usr/include" make -s -j8
+CC=arm-buildroot-uclinuxfdpiceabi-gcc LDFLAGS="-L${INSTALL_ROOT}/A2F/root/usr/lib" CFLAGS="-Os -I ${INSTALL_ROOT}/A2F/root/usr/include" DESTDIR="${INSTALL_ROOT}/A2F/root" make install -s
+make clean -s
+cd -
+
+
+# tbd doesn't build
+: '
+# Netperf
+mkdir build-netperf
+cd build-netperf
+ac_cv_func_setpgrp_void=yes LDFLAGS="-static -Wl,-s" CFLAGS="-Os" ${INSTALL_ROOT}/A2F//netperf-2.6.0/configure --build=i386-linux --host=arm-v7-linux-uclibceabi --enable-seclookup=none --prefix=/usr
+make -s
+fdpichdr -s 32768 src/netperf
+fdpichdr -s 32768 src/netserver
+make DESTDIR=${INSTALL_ROOT}/A2F/root -s
+cd -
+rm -rf build-netperf
+
+# x86 part
+mkdir build-netperf-x86
+cd build-netperf-x86
+CC_FOR_BUILD="/usr/bin/gcc -B/usr/bin/" CC="/usr/bin/gcc -B/usr/bin/ -m32" ${INSTALL_ROOT}/A2F/netperf-2.6.0/configure --prefix=/
+make DESTDIR=${INSTALL_ROOT}/tools install -s
+cd -
+rm -rf build-netperf-x86
+
+'# tbd
+
+
+# alsa-lib
+cd ${INSTALL_ROOT}/A2F/alsa-lib-1.0.25
+autoreconf --force --install
+automake
+LIBS="-lm" CFLAGS="-Os" CC=arm-buildroot-uclinuxfdpiceabi-gcc ./configure --disable-old-symbols --disable-alisp --host=arm-linux --build=i386-linux --prefix=/usr --exec-prefix=/usr --sysconfdir=/etc --with-alsa-devdir=/dev/snd --with-pcm-plugins="all" --with-ctl-plugins="all" --without-versioned --disable-python --with-softfloat
+make -s -j4 DESTDIR=${INSTALL_ROOT}/A2F/root install
+make distclean -s
+cd -
+
+#alsa-utils
+cd ${INSTALL_ROOT}/A2F/alsa-utils-1.0.25
+ALSA_LIBS="" \
+ALSA_LDFLAGS="" \
+LIBS="-lm -lasound -lrt" \
+LDFLAGS="-L${INSTALL_ROOT}/A2F/root/usr/lib" \
+CFLAGS="-I${INSTALL_ROOT}/A2F/root/usr/include" \
+./configure --build=i386-linux --host=arm-linux --disable-xmlto --without-curses --disable-nls --disable-alsamixer --disable-alsaloop
+make -s -j4 DESTDIR=${INSTALL_ROOT}/A2F/root install
+make distclean -s
+rm -f ${INSTALL_ROOT}/A2F/root/usr/sbin/alsaconf
+cd -
+
+# openssl
+# no shared?? -psl
+cd ${INSTALL_ROOT}/A2F/openssl-1.0.1h
+./Configure --prefix=/usr linux-generic32 no-threads "os/compiler:gcc:-Os -DNOMMU::::"
+make -s
+make -s install_sw INSTALL_PREFIX=${INSTALL_ROOT}/A2F/root
+make clean -s
+cd -
+
+
+# zlib
+cd ${INSTALL_ROOT}/A2F/zlib-1.2.8
+CC=${CROSS_COMPILE}gcc CFLAGS="-Os -static -Wl,-s" ./configure --prefix=/usr --static
+make -s
+make install DESTDIR=${INSTALL_ROOT}/A2F/root -s
+make distclean -s
+rm -rf ${INSTALL_ROOT}/A2F/root/usr/lib/*.la ${INSTALL_ROOT}/A2F/root/usr/local/lib/*.la || true
+cd -
+
+# ncurses
+cd ${INSTALL_ROOT}/A2F/ncurses
+CFLAGS="-Os" ./configure --build=i386-linux-gnu --host=arm-linux --without-ada --without-manpages --with-progs --with-tests --disable-pc-files  --without-profile --without-gpm --enable-ext-colors --enable-no-padding --with-shared --with-pthread --prefix=/usr
+CFLAGS="-Os" make -j9 -s
+make install DESTDIR=${INSTALL_ROOT}/A2F/root -s
+make -s distclean
+cd -
+
+
+cd ${INSTALL_ROOT}/A2F/can-utils
+mkdir build
+autoreconf --force --install
+automake
+CFLAGS="-Os" ./configure --build=i386-linux --host=arm-linux
+DESTDIR=$INSTALL_ROOT/A2F/root make install
+make -s distclean
+cd -
+
+cd ${INSTALL_ROOT}/A2F/can-tests
+mkdir build
+CC=arm-linux-gcc CFLAGS="-Os" make
+DESTDIR=$INSTALL_ROOT/A2F/root make install
+make -s distclean
+cd -
+
+cd ${INSTALL_ROOT}/A2F/iproute2
+make -f Makefile.fdpic-shared iptool CC=arm-buildroot-uclinuxfdpiceabi-gcc
+cp ip/ip ${INSTALL_ROOT}/A2F/root/usr/sbin
+make -s distclean
+cd -
+
+# samba
+mkdir -p ${INSTALL_ROOT}/A2F/samba-3.0.25/source/build
+cd ${INSTALL_ROOT}/A2F/samba-3.0.25/source/build
+../configure --without-krb5 --without-ldap --without-ads --without-included-popt --disable-cups --with-winbind=no --host=arm-linux  --prefix=/ --with-configdir=/etc SMB_BUILD_CC_NEGATIVE_ENUM_VALUES=yes samba_cv_have_getgrouplist=no CFLAGS="-Os -D__uClinux__"
+make
+# strip
+${CROSS_COMPILE}strip --strip-unneeded bin/smbd
+${CROSS_COMPILE}strip --strip-unneeded bin/nmbd
+# increase stack size
+fdpichdr -s 0x10000 bin/smbd
+fdpichdr -s 0x10000 bin/nmbd
+cp bin/smbd bin/nmbd ${INSTALL_ROOT}/A2F/root
+rm -rf ${INSTALL_ROOT}/A2F/samba-3.0.25/source/build
+cd -
+
+# libfuse
+# doesn't build, TBD
+: '
+cd ${INSTALL_ROOT}/A2F/libfuse-3.2.6
+sed -si "s# INSTALL_ROOT#$INSTALL_ROOT#" arm-cross-fdpic.cfg
+meson --cross-file arm-cross-fdpic.cfg -Dexamples=true --prefix=/usr --libdir=lib . build
+ninja -C build
+DESTDIR=${INSTALL_ROOT}/A2F/root ninja -C build install
+cd -
+'
+
+# strace
+cd ${INSTALL_ROOT}/A2F/strace-4.25
+./bootstrap
+./configure CFLAGS="-Os" CFLAGS_FOR_BUILD="-Os" CPPFLAGS="-Os" --host=arm-linux --prefix=/usr
+make -j 4
+make DESTDIR=${INSTALL_ROOT}/A2F/root install
+make -s distclean
+cd -
+
+# omping
+cd ${INSTALL_ROOT}/A2F/omping-0.0.5
+CC=gcc CROSS=$CROSS_COMPILE make CFLAGS="-Os"
+make DESTDIR=${INSTALL_ROOT}/A2F/root PREFIX=/usr install
+make -s distclean
+cd -
+
+# iptables
+cd ${INSTALL_ROOT}/A2F/iptables-1.8.1+gitb2fc2a3685
+./autogen.sh
+CFLAGS="-Os" ./configure --host=arm-linux --build=i386-linux --disable-nftables --prefix=/usr  PKG_CONFIG=""
+make -j 4
+make DESTDIR=${INSTALL_ROOT}/A2F/root install
+make -s distclean
+cd -
+
+CROSS_COMPILE=${CROSS_COMPILE_SAVED}
+
+# lvgl_bins — build the lvgl demos per supported MCU using the lvgl-branch
+# rootfs/lvgl/ recipe side-cloned earlier into .lvgl-build/.
+for _mcu in IMXRT105X_NXPEVK IMXRT106X_NXPEVK IMXRT117X_NXPEVK MAAXBOARD_RT; do
+	_lvgl_out=${INSTALL_ROOT}/.lvgl-build/rootfs/lvgl
+	make -C ${_lvgl_out} MCU=$_mcu
+	mkdir -p ${INSTALL_ROOT}/A2F/lvgl_bins/$_mcu
+	cp ${_lvgl_out}/liblvgl.so \
+	   ${_lvgl_out}/benchmark \
+	   ${_lvgl_out}/music \
+	   ${_lvgl_out}/stress \
+	   ${_lvgl_out}/widgets \
+	   ${INSTALL_ROOT}/A2F/lvgl_bins/$_mcu/
+	# ebike is only built for the 105X/106X targets — copy if present
+	if [ -f ${_lvgl_out}/ebike ]; then
+		cp ${_lvgl_out}/ebike ${INSTALL_ROOT}/A2F/lvgl_bins/$_mcu/
+	fi
+	make -C ${_lvgl_out} clean
+done
+unset _mcu _lvgl_out
+
+# cleanup
+rm -rf tools/vf6-ACTIVATE.sh
+
+#
+# Stripped all ELF objects in A2F/root
+#
+set +e
+rm -f ${INSTALL_ROOT}/A2F/root/usr/lib/*.la ${INSTALL_ROOT}/A2F/root/usr/local/lib/*.la || true
+cd ${INSTALL_ROOT}/A2F/root
+flist=$(find -type f -perm /u=x)
+for fname in $flist
+do
+	r=$(file $fname | grep -i " elf")
+	if [[ $? = 0 ]]; then
+		# ELF format
+		r=$(file $fname | grep "not stripped")
+		if [[ $? = 0 ]]; then
+			if [ ! -w "$fname" ]; then
+				chmod u+w $fname
+			fi
+			${CROSS_COMPILE_APPS}strip --strip-unneeded $fname
+		fi
+	fi
+done
+
+INNER_EOF
+
+chmod +x .a2f-build.sh
+./tools/docker/run.sh --mcu ${MCU} --sdk ${BUILDROOT_DEFCONFIG} bash ./.a2f-build.sh
+rm -f .a2f-build.sh
+
+rm -rf fdpic
+
+# Strip buildroot build artefacts and download cache (SDK is shipped as the sidecar tarball)
+rm -rf buildroot/output_*
+rm -rf buildroot/dl
+
+# Runtime state left behind by ACTIVATE.sh activations
+rm -f .activate-defaults
+
+# lvgl-branch side-clone consumed to populate A2F/lvgl_bins; not shipped
+rm -rf .lvgl-build
+
+# Strip build leftovers from A2F source trees — keep A2F/root and A2F/xiproot
+# (those are the populated rootfs snapshot, not source).
+for _d in A2F/*/; do
+	case "${_d}" in
+		A2F/root/|A2F/xiproot/) continue ;;
+	esac
+	find "${_d}" -type d \( -name .libs -o -name .deps -o -name __pycache__ \) \
+		-prune -exec rm -rf {} + 2>/dev/null || true
+	find "${_d}" -type f \( -name '*.o' -o -name '*.lo' -o -name '*.la' \
+		-o -name '*.Po' -o -name '*.Plo' -o -name '*.Tpo' \) \
+		-delete 2>/dev/null || true
+done
+unset _d
+rm -rf A2F/libfuse-3.2.6/build
+
+# Trim buildroot/configs/ to the BSP-relevant defconfigs
+find buildroot/configs -name '*_defconfig' \
+	! -name 'arm_cortexm_sdk_defconfig' \
+	! -name 'arm_cortexm_sdk_lite_defconfig' \
+	-delete
+
+if [ ${TAR} = "yes" ]; then
+	echo "Creating tarball..."
+	cd ${OUTDIR}
+	tar -c -j --owner=${DISTRUSER} --group=${DISTRUSER} -f $build_dir.tar.bz2 $build_dir
+	rm -rf ${OUTDIR}/$build_dir
+fi
+
+echo "Done, results are in ${OUTDIR}:"
+ls -ltr ${OUTDIR}

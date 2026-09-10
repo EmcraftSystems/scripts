@@ -1,0 +1,150 @@
+#!/bin/sh
+# set -x
+# Default work dir is cwd
+: ${WORKDIR:=`pwd`}
+: ${GITURL:="git.emcraft.com:/SR/git/A2F"}
+: ${GITHUBURL:="git@github.com:EmcraftSystems"}
+: ${GITLABURL:="git@gitlab.com:emcraft/STM32H7"}
+
+usage() {
+	echo "Usage: $0 [-d] [-t <target>] <tag>"
+	exit 1
+}
+
+CMD="add"
+TARGET=imxrt
+
+#
+# Process options
+#
+while getopts "pdt:" opt
+do
+    case "$opt" in
+        d)      CMD=rm ;;
+        t)      TARGET=$OPTARG ;;
+        *)      echo "$0: Invalid option '$opt'" >&2 ; exit 1 ;;
+        esac
+done
+
+shift `expr $OPTIND - 1`
+
+[ $# = 1 ] || usage;
+
+declare -a REPOLIST
+REPOLIST+=("dropbear:master-2022.83")
+REPOLIST+=("busybox-upstream:emcraft-1.35.0")
+REPOLIST+=("projects:linux-upstream-ng")
+REPOLIST+=("scripts:linux-upstream-5.15")
+REPOLIST+=("net-snmp")
+REPOLIST+=("iap_tool")
+REPOLIST+=("wireless_tools")
+REPOLIST+=("hostapd-1.0")
+REPOLIST+=("libnl-3.2.11")
+REPOLIST+=("netperf-2.6.0")
+REPOLIST+=("alsa-utils-1.0.25")
+REPOLIST+=("alsa-lib-1.0.25")
+REPOLIST+=("i2c-tools-3.1.0")
+REPOLIST+=("openssl-1.0.1h")
+REPOLIST+=("wpa_supplicant-2.2")
+REPOLIST+=("tslib:emcraft")
+REPOLIST+=("bt-tools")
+REPOLIST+=("pppd")
+REPOLIST+=("zlib-1.2.8")
+REPOLIST+=("openssh-7.1p2")
+REPOLIST+=("ncurses")
+REPOLIST+=("can-tests:master")
+REPOLIST+=("can-utils:emcraft")
+REPOLIST+=("iproute2:main-2.6.34")
+REPOLIST+=("fdpic/fdpichdr")
+REPOLIST+=("fdpic/uclibc")
+REPOLIST+=("fdpic/gdb")
+REPOLIST+=("samba-3.0.25")
+REPOLIST+=("libfuse:emcraft")
+REPOLIST+=("strace:v4.25")
+REPOLIST+=("iptables:emcraft-1.8.1")
+REPOLIST+=("omping:emcraft-0.0.5")
+REPOLIST+=("lvgl:v8.3.6")
+REPOLIST+=("lv_drivers:v8.3.0")
+
+if [ ${TARGET} = "stm32h7" -o ${TARGET} = "stm32h753ieval" ]; then
+	REPOLIST+=("u-boot-upstream:emcraft-2019.04")
+	REPOLIST+=("linux-stm:v6.1-stm32mp")
+	REPOLIST+=("tools:master-5.15")
+elif [ ${TARGET} = "imxrt1024" ]; then
+	REPOLIST+=("u-boot-vybrid:imxrt-6.12.20")
+	REPOLIST+=("linux-imx:emcraft-6.12.20")
+	REPOLIST+=("tools:master-6.12-imxrt")
+elif [ ${TARGET} = "imxrt1050"  -o ${TARGET} = "imxrt1060" ]; then
+	REPOLIST+=("u-boot-vybrid:imxrt-6.12.20")
+	REPOLIST+=("linux-imx:emcraft-6.12.20")
+	REPOLIST+=("tools:master-6.12-imxrt")
+elif [ ${TARGET} = "imxrt1170" -o ${TARGET} = "avnet" ]; then
+	REPOLIST+=("u-boot-vybrid:imxrt-6.12.20")
+	REPOLIST+=("linux-imx:emcraft-6.12.20")
+	REPOLIST+=("tools:master-6.12-imxrt")
+else
+	echo "Not supported tarrget=${TARGET}"
+	exit 1
+fi
+
+echo "Working in ${WORKDIR}/$1 ..."
+[ -d ${WORKDIR} ] || mkdir -p ${WORKDIR}
+[ -d ${WORKDIR}/$1 ] && (echo "Cleaning up ${WORKDIR}/$1..."; rm -rf ${WORKDIR}/$1)
+
+mkdir -p ${WORKDIR}/$1
+
+cd ${WORKDIR}/$1
+
+build_dir=$1
+
+for dir in ${REPOLIST[*]}
+do
+	declare -a d
+	d+=(${dir//:/ })
+	if [ ${#d[*]} -gt 1 ]; then
+		branch="-b ${d[1]}"
+	else
+		branch=""
+	fi
+	echo "Checkout ${d[0]} $branch"
+	dir_fetch=${d[0]}
+	dir_arch=`basename ${d[0]}`
+	echo "Creating tree in ${WORKDIR}/$build_dir/${dir_fetch} $branch"
+
+	if [[ "${d[0]}" == "linux-imx" || "${d[0]}" == "linux-stm" ]]; then
+		URL=${GITHUBURL}
+	elif [ "${d[0]}" == "u-boot-upstream" ]; then
+		URL=${GITLABURL}
+	else
+		URL=${GITURL}
+	fi
+
+	git clone --depth=1 $branch ${URL}/${dir_fetch}
+	unset d
+done
+
+
+for dir in ${REPOLIST[*]}
+do
+	declare -a d
+	d+=(${dir//:/ })
+	dir_fetch=`basename ${d[0]}`
+	cd ${WORKDIR}/$1/${dir_fetch} || exit 1
+	case $CMD in
+		 add) echo "Adding tag in ${dir_fetch}..."
+			git branch $1
+#			git push origin refs/tags/$1
+			git push origin $1
+			;;
+		  rm) echo "Removing tag in ${dir_fetch}..."
+			git branch -d $1
+			git push origin :refs/heads/$1
+			;;
+		   *) echo "Unknown command $CMD"
+			  exit 1 ;;
+	esac
+	unset d
+done
+
+echo "Cleaning up ${WORKDIR}/$1..."
+rm -rf ${WORKDIR}/$1
