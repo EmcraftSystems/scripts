@@ -11,6 +11,21 @@ set -e
 : ${GITHUBURL:="git@github.com:EmcraftSystems"}
 : ${GITLABURL:="git@gitlab.com:emcraft/STM32H7"}
 
+# Repos that now live on GitHub, mapping the name used here to the GitHub repo
+# name. The two differ for u-boot-vybrid, which was published as u-boot-imx (an
+# official fork of nxp-imx/uboot-imx). The mapping must stay explicit: the name
+# github.com/EmcraftSystems/u-boot-vybrid is a stale redirect to the archived
+# u-boot-fsl and would silently supply out-of-date sources.
+# Repos not listed here are still fetched from GITURL (git.emcraft.com).
+declare -A GITHUBREPO
+GITHUBREPO[linux-imx]=linux-imx
+GITHUBREPO[linux-stm]=linux-stm
+GITHUBREPO[buildroot]=buildroot
+GITHUBREPO[projects]=projects
+GITHUBREPO[scripts]=scripts
+GITHUBREPO[tools]=tools
+GITHUBREPO[u-boot-vybrid]=u-boot-imx
+
 TOOLCHAINDIR="arm-buildroot-uclinuxfdpiceabi_sdk-buildroot"
 TOOLCHAIN="arm-buildroot-uclinuxfdpiceabi"
 
@@ -66,7 +81,7 @@ declare -a REPOLIST
 REPOLIST+=("busybox-upstream:emcraft-1.35.0")
 REPOLIST+=("projects:linux-upstream-ng")
 REPOLIST+=("buildroot:emcraft-fdpic-2022.08.x")
-REPOLIST+=("scripts")
+REPOLIST+=("scripts:linux-upstream-ng")
 # tbd net-snmp 5.x source incompatible with buildroot's OpenSSL 1.1+ (opaque EVP_MD_CTX)
 # REPOLIST+=("net-snmp")
 REPOLIST+=("iap_tool")
@@ -172,8 +187,13 @@ do
 		continue
 	fi
 
-	if [[ "${d[0]}" == "linux-imx" || "${d[0]}" == "linux-stm" || "${d[0]}" == "buildroot" ]]; then
-		git clone --depth=1 ${GITHUBURL}/${dir_fetch} -b $branch && rm -rf ${dir_fetch}/.git
+	if [ -n "${GITHUBREPO[${d[0]}]:-}" ]; then
+		# GitHub does not offer git-upload-archive, so "git archive --remote"
+		# is not usable there; clone shallow and drop the .git instead.
+		# The destination is given explicitly because the GitHub repo name
+		# may differ from the directory the rest of this script expects.
+		git clone --depth=1 ${GITHUBURL}/${GITHUBREPO[${d[0]}]} -b $branch ${dir_fetch} \
+			&& rm -rf ${dir_fetch}/.git
 	elif [ "${d[0]}" == "u-boot-upstream" ]; then
 		git clone --depth=1 ${GITLABURL}/${dir_fetch} -b $branch && rm -rf ${dir_fetch}/.git
 	else
@@ -186,8 +206,8 @@ done
 # Side-clone of the lvgl branch of projects: provides the rootfs/lvgl/ build
 # recipe used to populate A2F/lvgl_bins/. Not shipped in the release.
 echo "Checkout projects (lvgl recipe) linux-upstream-ng-imxrt-lvgl"
-git archive --format=tar --remote ${GITURL}/projects --prefix=.lvgl-build/ \
-	linux-upstream-ng-imxrt-lvgl | tar xf -
+git clone --depth=1 ${GITHUBURL}/${GITHUBREPO[projects]} \
+	-b linux-upstream-ng-imxrt-lvgl .lvgl-build && rm -rf .lvgl-build/.git
 
 # Copy source trees
 echo -n $build_dir > _MANIFEST

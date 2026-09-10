@@ -1,10 +1,24 @@
-#!/bin/sh
+#!/bin/bash
 # set -x
 # Default work dir is cwd
 : ${WORKDIR:=`pwd`}
 : ${GITURL:="git.emcraft.com:/SR/git/A2F"}
 : ${GITHUBURL:="git@github.com:EmcraftSystems"}
 : ${GITLABURL:="git@gitlab.com:emcraft/STM32H7"}
+
+# Repos that now live on GitHub, mapping the name used here to the GitHub repo
+# name. u-boot-vybrid was published as u-boot-imx; the mapping must stay
+# explicit because github.com/EmcraftSystems/u-boot-vybrid is a stale redirect
+# to the archived u-boot-fsl.
+# "scripts" is deliberately absent: this script tags scripts:linux-upstream-5.15
+# and only linux-upstream-ng has been published, so it still comes from GITURL.
+# Repos not listed here are still fetched from GITURL (git.emcraft.com).
+declare -A GITHUBREPO
+GITHUBREPO[linux-imx]=linux-imx
+GITHUBREPO[linux-stm]=linux-stm
+GITHUBREPO[projects]=projects
+GITHUBREPO[tools]=tools
+GITHUBREPO[u-boot-vybrid]=u-boot-imx
 
 usage() {
 	echo "Usage: $0 [-d] [-t <target>] <tag>"
@@ -111,15 +125,20 @@ do
 	dir_arch=`basename ${d[0]}`
 	echo "Creating tree in ${WORKDIR}/$build_dir/${dir_fetch} $branch"
 
-	if [[ "${d[0]}" == "linux-imx" || "${d[0]}" == "linux-stm" ]]; then
+	if [ -n "${GITHUBREPO[${d[0]}]:-}" ]; then
 		URL=${GITHUBURL}
+		repo=${GITHUBREPO[${d[0]}]}
 	elif [ "${d[0]}" == "u-boot-upstream" ]; then
 		URL=${GITLABURL}
+		repo=${dir_fetch}
 	else
 		URL=${GITURL}
+		repo=${dir_fetch}
 	fi
 
-	git clone --depth=1 $branch ${URL}/${dir_fetch}
+	# Clone into dir_arch explicitly: the GitHub repo name may differ from the
+	# directory name the tagging loop below cds into (basename of the entry).
+	git clone --depth=1 $branch ${URL}/${repo} ${dir_arch}
 	unset d
 done
 
