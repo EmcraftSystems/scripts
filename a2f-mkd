@@ -654,6 +654,9 @@ rm -rf buildroot/dl
 # Runtime state left behind by ACTIVATE.sh activations
 rm -f .activate-defaults
 
+# Docker image markers written by tools/docker/run.sh --build
+rm -f tools/docker/.image-built-at*
+
 # lvgl-branch side-clone consumed to populate A2F/lvgl_bins; not shipped
 rm -rf .lvgl-build
 
