@@ -29,7 +29,7 @@ GITHUBREPO[u-boot-vybrid]=u-boot-imx
 TOOLCHAINDIR="arm-buildroot-uclinuxfdpiceabi_sdk-buildroot"
 TOOLCHAIN="arm-buildroot-uclinuxfdpiceabi"
 
-PROJECTLIST="rootfs"
+PROJECTLIST="rootfs rootfs_flash"
 TAR="no"
 
 MCU="IMXRT117X_NXPEVK"
@@ -252,16 +252,34 @@ cd A2F
 # For net-snmp, scripts install to A2F/xiproot there.
 ln -s root xiproot
 cd -
-# Copy only the projects from the list
+# Copy only the projects from the list that support a board in TARGETS
 mkdir tmp
 mv projects/* tmp
+_projects=
 for d in ${PROJECTLIST}
 do
+    if [ ! -d tmp/${d} ]; then
+        echo "ERROR: project ${d} is not in projects" >&2
+        exit 1
+    fi
+    _keep=
+    for t in ${TARGETS}; do
+        if [ -f tmp/${d}/${t}_defconfig ] || compgen -G "tmp/${d}/*.${t}" >/dev/null; then
+            _keep=yes
+        fi
+    done
+    if [ -z "${_keep}" ]; then
+        echo "Leaving out project ${d}: no board files for ${TARGETS}"
+        continue
+    fi
+    _projects="${_projects} ${d}"
     mv tmp/${d} projects/
 #    if [ ${MCU} = "IMXRT106X*" ]; then
 #	cp projects/${d}/${d}.kernel.IMXRT105X* projects/${d}/${d}.kernel.IMXRT106X_NXPEVK
 #    fi
 done
+PROJECTLIST=${_projects}
+unset _projects _keep
 mv tmp/Rules.make projects/
 mv tmp/rfs-builder.py projects/
 rm -rf tmp
