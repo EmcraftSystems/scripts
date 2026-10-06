@@ -101,9 +101,6 @@ REPOLIST+=("openssl-1.0.1h")
 REPOLIST+=("bt-tools")
 REPOLIST+=("zlib-1.2.8")
 REPOLIST+=("ncurses")
-REPOLIST+=("can-tests:master")
-REPOLIST+=("can-utils:emcraft")
-REPOLIST+=("iproute2:main-2.6.34")
 REPOLIST+=("fdpic/fdpichdr")
 REPOLIST+=("samba-3.0.25")
 # tbd REPOLIST+=("libfuse:emcraft")
@@ -231,9 +228,6 @@ mv zlib-1.2.8 A2F/
 # mv qt-4.7.3 A2F/
 rm -rf crankdemo # installs to project
 mv ncurses A2F/
-mv can-utils A2F/
-mv can-tests A2F/
-mv iproute2 A2F/
 mv fdpic/fdpichdr A2F/
 mv samba-3.0.25 A2F/
 # tbd mv libfuse A2F/libfuse-3.2.6
@@ -512,28 +506,6 @@ make install DESTDIR=${INSTALL_ROOT}/A2F/root -s
 make -s distclean
 cd -
 
-
-cd ${INSTALL_ROOT}/A2F/can-utils
-mkdir build
-autoreconf --force --install
-automake
-CFLAGS="-Os" ./configure --build=i386-linux --host=arm-linux
-DESTDIR=$INSTALL_ROOT/A2F/root make install
-make -s distclean
-cd -
-
-cd ${INSTALL_ROOT}/A2F/can-tests
-mkdir build
-CC=arm-linux-gcc CFLAGS="-Os" make
-DESTDIR=$INSTALL_ROOT/A2F/root make install
-make -s distclean
-cd -
-
-cd ${INSTALL_ROOT}/A2F/iproute2
-make -f Makefile.fdpic-shared iptool CC=arm-buildroot-uclinuxfdpiceabi-gcc
-cp ip/ip ${INSTALL_ROOT}/A2F/root/usr/sbin
-make -s distclean
-cd -
 
 # samba
 mkdir -p ${INSTALL_ROOT}/A2F/samba-3.0.25/source/build
