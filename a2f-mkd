@@ -29,7 +29,7 @@ GITHUBREPO[u-boot-vybrid]=u-boot-imx
 TOOLCHAINDIR="arm-buildroot-uclinuxfdpiceabi_sdk-buildroot"
 TOOLCHAIN="arm-buildroot-uclinuxfdpiceabi"
 
-PROJECTLIST="rootfs rootfs_flash"
+PROJECTLIST="rootfs rootfs_flash hello"
 TAR="no"
 
 MCU="IMXRT117X_NXPEVK"
