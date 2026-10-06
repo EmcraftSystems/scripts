@@ -610,7 +610,7 @@ for _mcu in IMXRT105X_NXPEVK IMXRT106X_NXPEVK IMXRT117X_NXPEVK MAAXBOARD_RT; do
 	if [ -f ${_lvgl_out}/ebike ]; then
 		cp ${_lvgl_out}/ebike ${INSTALL_ROOT}/A2F/lvgl_bins/$_mcu/
 	fi
-	make -C ${_lvgl_out} clean
+	make -C ${_lvgl_out} MCU=$_mcu clean
 done
 unset _mcu _lvgl_out
 
