@@ -638,6 +638,9 @@ rm -rf buildroot/dl
 # Runtime state left behind by ACTIVATE.sh activations
 rm -f .activate-defaults
 
+# Docker image markers written by tools/docker/run.sh --build
+rm -f tools/docker/.image-built-at*
+
 # Strip build leftovers from A2F source trees — keep A2F/root and A2F/xiproot
 # (those are the populated rootfs snapshot, not source).
 for _d in A2F/*/; do
