@@ -77,6 +77,12 @@ case "${MCU}" in
     *) ;;
 esac
 
+# Boards shipped in the tarball: the IMXRT117X tarball carries the MaaXBoard-RT too
+case "${MCU}" in
+    IMXRT117X_NXPEVK) TARGETS="IMXRT117X_NXPEVK MAAXBOARD_RT" ;;
+    *) TARGETS="${MCU}" ;;
+esac
+
 declare -a REPOLIST
 REPOLIST+=("busybox-upstream:emcraft-1.35.0")
 REPOLIST+=("projects:linux-upstream-ng")
@@ -262,20 +268,40 @@ rm -rf tmp
 rm -rf scripts
 
 
-PROJECTS_CLEANUP_LIST=`cd projects; find ${PROJECTLIST} -type f \( -name *.dts.* -o -name *.kernel.* -o -name *_defconfig \) \
-	-not \( -name ${PROJECTLIST}.*.${MCU} -o -name ${MCU}_defconfig \)`
+# Board files (DTS, kernel config, defconfig) and per-board directories
+# (rootfs/lvgl/<board>/) of the boards not in TARGETS
+PROJECTS_CLEANUP_LIST=$(cd projects; find ${PROJECTLIST} -type f \
+	\( -name '*.dts.*' -o -name '*.kernel.*' -o -name '*_defconfig' \) |
+	while read f; do
+		keep=
+		for t in ${TARGETS}; do
+			case "$(basename $f)" in
+				(*.${t}|${t}_defconfig) keep=yes ;;
+			esac
+		done
+		[ -n "$keep" ] || echo $f
+	done
+	for p in ${PROJECTLIST}; do
+		for b in $(ls $p | sed -n 's/_defconfig$//p'); do
+			case " ${TARGETS} " in
+				(*" ${b} "*) ;;
+				(*) find $p -mindepth 1 -type d -name $b ;;
+			esac
+		done
+	done)
 mv $LINUX_SRC_DIR linux
 mv tools/ACTIVATE-xip.sh ACTIVATE.sh
 rm -f tools/ACTIVATE*
 
 # ACTIVATE.sh: substitute _DEFAULT_MCU and _SUPPORTED_MCUS in the new template
-python3 - "${MCU}" <<'PYEOF'
+python3 - "${MCU}" ${TARGETS} <<'PYEOF'
 import re, sys
 mcu = sys.argv[1]
+targets = sys.argv[2:]
 with open('ACTIVATE.sh') as f:
 	text = f.read()
-new_mcus = '_SUPPORTED_MCUS="\\\nIMXRT117X_NXPEVK \\\nMAAXBOARD_RT"'
-text, n = re.subn(r'_SUPPORTED_MCUS="\\\n(?:[A-Z0-9_]+ \\\n)+[A-Z0-9_]+"', new_mcus, text)
+new_mcus = '_SUPPORTED_MCUS="\\\n' + ' \\\n'.join(targets) + '"'
+text, n = re.subn(r'_SUPPORTED_MCUS="\\\n(?:[A-Z0-9_]+ \\\n)+[A-Z0-9_]+"', lambda m: new_mcus, text)
 assert n == 1, "failed to locate _SUPPORTED_MCUS block"
 text, n = re.subn(r'^_DEFAULT_MCU=.*$', f'_DEFAULT_MCU="{mcu}"', text, flags=re.MULTILINE)
 assert n == 1, "failed to locate _DEFAULT_MCU line"
