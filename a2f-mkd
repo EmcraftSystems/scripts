@@ -209,12 +209,6 @@ do
 	unset d
 done
 
-# Side-clone of the lvgl branch of projects: provides the rootfs/lvgl/ build
-# recipe used to populate A2F/lvgl_bins/. Not shipped in the release.
-echo "Checkout projects (lvgl recipe) linux-upstream-ng-imxrt-lvgl"
-git clone --depth=1 ${GITHUBURL}/${GITHUBREPO[projects]} \
-	-b linux-upstream-ng-imxrt-lvgl .lvgl-build && rm -rf .lvgl-build/.git
-
 # Copy source trees
 echo -n $build_dir > _MANIFEST
 echo "-${MCU}" >> _MANIFEST
@@ -594,26 +588,6 @@ cd -
 
 CROSS_COMPILE=${CROSS_COMPILE_SAVED}
 
-# lvgl_bins — build the lvgl demos per supported MCU using the lvgl-branch
-# rootfs/lvgl/ recipe side-cloned earlier into .lvgl-build/.
-for _mcu in IMXRT105X_NXPEVK IMXRT106X_NXPEVK IMXRT117X_NXPEVK MAAXBOARD_RT; do
-	_lvgl_out=${INSTALL_ROOT}/.lvgl-build/rootfs/lvgl
-	make -C ${_lvgl_out} MCU=$_mcu
-	mkdir -p ${INSTALL_ROOT}/A2F/lvgl_bins/$_mcu
-	cp ${_lvgl_out}/liblvgl.so \
-	   ${_lvgl_out}/benchmark \
-	   ${_lvgl_out}/music \
-	   ${_lvgl_out}/stress \
-	   ${_lvgl_out}/widgets \
-	   ${INSTALL_ROOT}/A2F/lvgl_bins/$_mcu/
-	# ebike is only built for the 105X/106X targets — copy if present
-	if [ -f ${_lvgl_out}/ebike ]; then
-		cp ${_lvgl_out}/ebike ${INSTALL_ROOT}/A2F/lvgl_bins/$_mcu/
-	fi
-	make -C ${_lvgl_out} MCU=$_mcu clean
-done
-unset _mcu _lvgl_out
-
 # cleanup
 rm -rf tools/vf6-ACTIVATE.sh
 
@@ -656,9 +630,6 @@ rm -f .activate-defaults
 
 # Docker image markers written by tools/docker/run.sh --build
 rm -f tools/docker/.image-built-at*
-
-# lvgl-branch side-clone consumed to populate A2F/lvgl_bins; not shipped
-rm -rf .lvgl-build
 
 # Strip build leftovers from A2F source trees — keep A2F/root and A2F/xiproot
 # (those are the populated rootfs snapshot, not source).
