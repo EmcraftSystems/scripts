@@ -77,8 +77,6 @@ REPOLIST+=("libfuse:emcraft")
 REPOLIST+=("strace:v4.25")
 REPOLIST+=("iptables:emcraft-1.8.1")
 REPOLIST+=("omping:emcraft-0.0.5")
-REPOLIST+=("lvgl:v8.3.6")
-REPOLIST+=("lv_drivers:v8.3.0")
 
 if [ ${TARGET} = "stm32h7" -o ${TARGET} = "stm32h753ieval" ]; then
 	REPOLIST+=("u-boot-upstream:emcraft-2019.04")
