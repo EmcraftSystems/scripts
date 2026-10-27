@@ -35,7 +35,7 @@ UPSTREAMREPO[lvgl]=https://github.com/lvgl/lvgl.git
 TOOLCHAINDIR="arm-buildroot-uclinuxfdpiceabi_sdk-buildroot"
 TOOLCHAIN="arm-buildroot-uclinuxfdpiceabi"
 
-PROJECTLIST="rootfs rootfs_flash"
+PROJECTLIST="rootfs rootfs_flash hello"
 TAR="no"
 
 MCU="IMXRT117X_NXPEVK"
